@@ -72,9 +72,14 @@ async function fetchEvent(eventId) {
   return pickEvent(await res.json());
 }
 
+// Texto no vacío (evita errores 500 si llega un número, null, un objeto...).
+const isText = (value) => typeof value === 'string' && value.trim() !== '';
+
+const MAX_INT = 2147483647; // máximo de una columna INTEGER de PostgreSQL
+
 const toEventId = (value) => {
   const id = Number(value);
-  if (!Number.isInteger(id) || id <= 0) throw new HttpError(400, 'event_id no válido');
+  if (!Number.isInteger(id) || id <= 0 || id > MAX_INT) throw new HttpError(400, 'event_id no válido');
   return id;
 };
 
@@ -108,7 +113,7 @@ app.post(
   '/auth/register',
   route(async (req, res) => {
     const { name, email, password } = req.body ?? {};
-    if (!name?.trim() || !email?.trim() || !password) {
+    if (!isText(name) || !isText(email) || !isText(password)) {
       throw new HttpError(400, 'name, email y password son obligatorios');
     }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new HttpError(400, 'Email no válido');
@@ -131,7 +136,7 @@ app.post(
   '/auth/login',
   route(async (req, res) => {
     const { email, password } = req.body ?? {};
-    if (!email || !password) throw new HttpError(400, 'email y password son obligatorios');
+    if (!isText(email) || !isText(password)) throw new HttpError(400, 'email y password son obligatorios');
 
     const { rows } = await pool.query('SELECT * FROM users WHERE email = $1', [email.trim().toLowerCase()]);
     const user = rows[0];

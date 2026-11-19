@@ -59,6 +59,18 @@ services:
       event_service:
         condition: service_healthy
 
+  assistant_service:
+    build: ./assistant-service
+    image: zyntra_assistant_service
+    container_name: zyntra_assistant_service
+    environment:
+      EVENT_SERVICE_URL: http://event_service:8000
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ASSISTANT_MODEL: ${ASSISTANT_MODEL:-claude-opus-5-5}
+    depends_on:
+      event_service:
+        condition: service_healthy
+
   gateway:
     build: ./gateway
     image: zyntra_gateway
@@ -66,11 +78,14 @@ services:
     environment:
       EVENT_SERVICE_URL: http://event_service:8000
       USER_SERVICE_URL: http://user_service:4000
+      ASSISTANT_SERVICE_URL: http://assistant_service:8001
       CORS_ORIGINS: http://localhost:8080
     depends_on:
       event_service:
         condition: service_healthy
       user_service:
+        condition: service_healthy
+      assistant_service:
         condition: service_healthy
 
   frontend:

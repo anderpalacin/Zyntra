@@ -30,6 +30,22 @@
 | Ticketmaster con clave falsa | Respuesta desde caché | Eventos con `"source": "cache"` | ✅ |
 | `docker compose down -v` y volver a levantar | Arranca desde cero y funciona | Tablas recreadas, flujo completo OK | ✅ |
 
+### Asistente con IA (19 de noviembre de 2026)
+
+`POST /assistant` con `{message, previous?}`. Probado en modo básico (sin clave) y con Claude simulado.
+
+| Mensaje | Esperado | Obtenido | ✔ |
+|---------|----------|----------|---|
+| «algo de rock en Bilbao este mes» | Bilbao + Rock + 19–30 nov; sin resultados en esas fechas → relaja fechas | «No hay conciertos de rock en Bilbao del 19 al 30 de noviembre, pero estos son los próximos…» + 1 concierto (`relaxed: ["dates"]`) | ✅ |
+| «rock en Madrid este fin de semana» | Madrid + Rock + vie–dom | 1 concierto el 22 nov | ✅ |
+| «y en Barcelona?» con `previous` = la búsqueda anterior | Cambia solo la ciudad | Barcelona + Rock + 20–22 nov, 2 conciertos | ✅ |
+| «jazz en diciembre» | Jazz + 1–31 dic | 2 conciertos | ✅ |
+| «Pop concerts in Madrid next month» | Respuesta en inglés | «Done! I found 10 pop concerts in Madrid…» | ✅ |
+| «hola» | Mensaje de ayuda, sin conciertos | Ayuda con un ejemplo, `events: []` | ✅ |
+| `message` vacío | `422` | `422` | ✅ |
+| Claude con clave falsa / rechazo | Cae al intérprete básico | `engine: "basic"`, respuesta correcta | ✅ |
+| 21 preguntas en un minuto | `429` a partir de la 21.ª | `429` | ✅ |
+
 ### Prueba visual
 
 Web abierta en una ventana normal y otra de incógnito con dos cuentas distintas: cada una ve solo sus conciertos en **My concerts**.

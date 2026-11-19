@@ -8,6 +8,7 @@ export interface ConcertEvent {
   price: number | null;
   image_url: string | null;
   url: string | null;
+  genre?: string | null;
   source?: string;
 }
 
@@ -30,4 +31,20 @@ export interface Favorite {
   status: FavoriteStatus;
   event: ConcertEvent;
   created_at: string;
+}
+
+export interface SearchFilters {
+  city: string | null;
+  genre: string | null;
+  keyword: string | null;
+  date_from: string | null;
+  date_to: string | null;
+}
+
+export interface AssistantResponse {
+  reply: string;
+  filters: SearchFilters;
+  relaxed: ('dates' | 'genre')[];
+  events: ConcertEvent[];
+  engine: 'claude' | 'basic';
 }

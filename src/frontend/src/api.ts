@@ -1,4 +1,12 @@
-import type { AuthResponse, ConcertEvent, Favorite, FavoriteStatus, User } from './types';
+import type {
+  AssistantResponse,
+  AuthResponse,
+  ConcertEvent,
+  Favorite,
+  FavoriteStatus,
+  SearchFilters,
+  User,
+} from './types';
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -55,4 +63,7 @@ export const api = {
     request<Favorite>(`/users/me/favorites/${eventId}`, { method: 'PATCH', token, body: { status } }),
   removeFavorite: (token: string, eventId: number) =>
     request<void>(`/users/me/favorites/${eventId}`, { method: 'DELETE', token }),
+
+  ask: (message: string, previous: SearchFilters | null = null) =>
+    request<AssistantResponse>('/assistant', { method: 'POST', body: { message, previous } }),
 };

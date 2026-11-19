@@ -4,6 +4,7 @@ import { Home } from './pages/Home';
 import { EventDetail } from './pages/EventDetail';
 import { AuthPage } from './pages/AuthPage';
 import { MyConcerts } from './pages/MyConcerts';
+import { Assistant } from './pages/Assistant';
 
 export function App() {
   const { user, logout } = useAuth();
@@ -18,6 +19,7 @@ export function App() {
           <NavLink to="/" end>
             Home
           </NavLink>
+          <NavLink to="/assistant">✨ Assistant</NavLink>
           <NavLink to="/me">My concerts</NavLink>
           {user ? (
             <>
@@ -37,6 +39,7 @@ export function App() {
           <Route path="/events/:id" element={<EventDetail />} />
           <Route path="/login" element={<AuthPage mode="login" />} />
           <Route path="/register" element={<AuthPage mode="register" />} />
+          <Route path="/assistant" element={<Assistant />} />
           <Route path="/me" element={<MyConcerts />} />
           <Route path="*" element={<p className="muted">Page not found.</p>} />
         </Routes>

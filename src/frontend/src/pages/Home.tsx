@@ -1,10 +1,11 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import { EventCard } from '../components/EventCard';
 import type { ConcertEvent } from '../types';
 
 const CITIES = ['Madrid', 'Barcelona', 'Bilbao', 'Valencia', 'Sevilla'];
+const AI_EXAMPLE = 'Algo de rock en Bilbao este mes';
 
 export function Home() {
   const [params, setParams] = useSearchParams();
@@ -64,6 +65,14 @@ export function Home() {
             </button>
           )}
         </div>
+        <Link to={`/assistant?q=${encodeURIComponent(AI_EXAMPLE)}`} className="ai-teaser">
+          <span className="ai-teaser-icon">✨</span>
+          <span>
+            <strong>Or just ask the assistant</strong>
+            <span className="muted"> — “{AI_EXAMPLE}”</span>
+          </span>
+          <span aria-hidden="true">→</span>
+        </Link>
       </section>
 
       <h2>{city ? `Concerts in ${city}` : 'Upcoming concerts'}</h2>

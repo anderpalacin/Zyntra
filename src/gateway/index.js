@@ -6,6 +6,7 @@ import { createProxyMiddleware } from 'http-proxy-middleware';
 const PORT = Number(process.env.PORT ?? 3000);
 const EVENT_SERVICE_URL = process.env.EVENT_SERVICE_URL ?? 'http://127.0.0.1:8000';
 const USER_SERVICE_URL = process.env.USER_SERVICE_URL ?? 'http://127.0.0.1:4000';
+const ASSISTANT_SERVICE_URL = process.env.ASSISTANT_SERVICE_URL ?? 'http://127.0.0.1:8001';
 const CORS_ORIGINS = (process.env.CORS_ORIGINS ?? 'http://localhost:5173').split(',');
 
 const proxy = (target, pathFilter) =>
@@ -30,6 +31,7 @@ app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 
 app.use(proxy(EVENT_SERVICE_URL, '/api/events'));
 app.use(proxy(USER_SERVICE_URL, ['/api/auth', '/api/users']));
+app.use(proxy(ASSISTANT_SERVICE_URL, '/api/assistant'));
 
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Ruta no encontrada' }));
 
@@ -37,4 +39,5 @@ app.listen(PORT, () => {
   console.log(`Gateway listening on :${PORT}`);
   console.log(`  /api/events      -> ${EVENT_SERVICE_URL}`);
   console.log(`  /api/auth|users  -> ${USER_SERVICE_URL}`);
+  console.log(`  /api/assistant   -> ${ASSISTANT_SERVICE_URL}`);
 });
