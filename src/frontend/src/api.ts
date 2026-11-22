@@ -1,6 +1,10 @@
 import type {
+  ArtistCandidate,
+  ArtistDetail,
+  CityCount,
   AssistantResponse,
   AuthResponse,
+  ChatTurn,
   ConcertEvent,
   Favorite,
   FavoriteStatus,
@@ -41,14 +45,21 @@ async function request<T>(path: string, { method = 'GET', body, token }: Request
 }
 
 export const api = {
-  events: (params: { city?: string; q?: string } = {}) => {
+  events: (params: { city?: string; q?: string; limit?: number; offset?: number } = {}) => {
     const qs = new URLSearchParams();
     if (params.city) qs.set('city', params.city);
     if (params.q) qs.set('q', params.q);
+    if (params.limit) qs.set('limit', String(params.limit));
+    if (params.offset) qs.set('offset', String(params.offset));
     const query = qs.toString();
     return request<ConcertEvent[]>(`/events${query ? `?${query}` : ''}`);
   },
   event: (id: number) => request<ConcertEvent>(`/events/${id}`),
+
+  cities: () => request<CityCount[]>('/events/cities?limit=100'),
+  searchArtists: (q: string) => request<ArtistCandidate[]>(`/artists/search?q=${encodeURIComponent(q)}`),
+  artist: (mbid: string, city: string) =>
+    request<ArtistDetail>(`/artists/${mbid}?city=${encodeURIComponent(city)}`),
 
   register: (name: string, email: string, password: string) =>
     request<AuthResponse>('/auth/register', { method: 'POST', body: { name, email, password } }),
@@ -64,6 +75,6 @@ export const api = {
   removeFavorite: (token: string, eventId: number) =>
     request<void>(`/users/me/favorites/${eventId}`, { method: 'DELETE', token }),
 
-  ask: (message: string, previous: SearchFilters | null = null) =>
-    request<AssistantResponse>('/assistant', { method: 'POST', body: { message, previous } }),
+  ask: (message: string, previous: SearchFilters | null = null, history: ChatTurn[] = []) =>
+    request<AssistantResponse>('/assistant', { method: 'POST', body: { message, previous, history } }),
 };

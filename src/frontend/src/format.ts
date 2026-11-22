@@ -10,4 +10,4 @@ const dateFmt = new Intl.DateTimeFormat('en-GB', {
 export const formatDate = (iso: string) => dateFmt.format(new Date(iso));
 
 export const formatPrice = (price: number | null) =>
-  price == null ? null : new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'EUR' }).format(price);
+  price == null ? null : price === 0 ? 'Free' : new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'EUR' }).format(price);

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { ArrowLeft, ArrowRight, ArrowUpRight, Check, Heart } from 'lucide-react';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import { formatDate, formatPrice } from '../format';
@@ -65,35 +66,45 @@ export function EventDetail() {
   return (
     <article className="detail">
       <button className="ghost back" onClick={() => navigate(-1)}>
-        ← Back
+        <ArrowLeft size={18} aria-hidden="true" /> Back
       </button>
       {event.image_url && <img src={event.image_url} alt="" className="detail-img" />}
       <h1>{event.name}</h1>
       {event.artist !== event.name && <p className="artist">{event.artist}</p>}
+      {event.source !== 'kulturklik' && (
+        <Link
+          to={`/artists?q=${encodeURIComponent(event.artist)}&city=${encodeURIComponent(event.city)}`}
+          className="link-arrow artist-link"
+        >
+          All dates and concert history of {event.artist} in {event.city}
+          <ArrowRight size={16} aria-hidden="true" />
+        </Link>
+      )}
       <dl>
         <dt>When</dt>
-        <dd>{formatDate(event.date)}</dd>
+        <dd className="num">{formatDate(event.date)}</dd>
         <dt>Where</dt>
         <dd>
           {event.venue}, {event.city}
         </dd>
         <dt>Price</dt>
-        <dd>{price ? `from ${price}` : 'See ticket site'}</dd>
+        <dd className="num">{price ? (event.price === 0 ? price : `from ${price}`) : 'See ticket site'}</dd>
       </dl>
       {error && <p className="error">{error}</p>}
       <div className="actions">
         {saved ? (
           <Link to="/me" className="button secondary">
-            ✓ Saved — view My concerts
+            <Check size={18} aria-hidden="true" /> Saved — view My concerts
           </Link>
         ) : (
           <button onClick={onSave} disabled={saving}>
-            {saving ? 'Saving…' : '♡ Save'}
+            <Heart size={18} aria-hidden="true" />
+            {saving ? 'Saving…' : 'Save'}
           </button>
         )}
         {event.url && (
           <a href={event.url} target="_blank" rel="noreferrer" className="button secondary">
-            Buy tickets ↗
+            Buy tickets <ArrowUpRight size={18} aria-hidden="true" />
           </a>
         )}
       </div>

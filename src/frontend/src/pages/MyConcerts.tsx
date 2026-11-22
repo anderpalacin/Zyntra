@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
+import { Music, Plus, X } from 'lucide-react';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import { formatDate } from '../format';
@@ -44,21 +45,29 @@ export function MyConcerts() {
 
   const row = (f: Favorite) => (
     <li key={f.event_id} className="row">
-      {f.event.image_url ? <img src={f.event.image_url} alt="" /> : <div className="row-img">♪</div>}
+      {f.event.image_url ? <img src={f.event.image_url} alt="" /> : <div className="row-img">
+          <Music size={24} strokeWidth={1.5} aria-hidden="true" />
+        </div>}
       <div className="row-body">
         <Link to={`/events/${f.event_id}`}>
           <strong>{f.event.name}</strong>
         </Link>
-        <span className="muted small">
+        <span className="muted small num">
           {formatDate(f.event.date)} · {f.event.venue}, {f.event.city}
         </span>
       </div>
       <div className="row-actions">
         <button className={f.status === 'planned' ? 'secondary' : ''} onClick={() => toggleAgenda(f)}>
-          {f.status === 'planned' ? 'Remove from agenda' : '+ Add to agenda'}
+          {f.status === 'planned' ? (
+            'Remove from agenda'
+          ) : (
+            <>
+              <Plus size={16} aria-hidden="true" /> Add to agenda
+            </>
+          )}
         </button>
         <button className="ghost" onClick={() => remove(f)} aria-label={`Remove ${f.event.name}`}>
-          ✕
+          <X size={18} aria-hidden="true" />
         </button>
       </div>
     </li>
@@ -77,7 +86,7 @@ export function MyConcerts() {
 
       {agenda.length > 0 && (
         <section>
-          <h2>📅 My agenda</h2>
+          <h2>My agenda</h2>
           <ul className="list">{agenda.map(row)}</ul>
         </section>
       )}

@@ -29,7 +29,7 @@ app.use(cors({ origin: CORS_ORIGINS }));
 
 app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 
-app.use(proxy(EVENT_SERVICE_URL, '/api/events'));
+app.use(proxy(EVENT_SERVICE_URL, ['/api/events', '/api/artists']));
 app.use(proxy(USER_SERVICE_URL, ['/api/auth', '/api/users']));
 app.use(proxy(ASSISTANT_SERVICE_URL, '/api/assistant'));
 
@@ -37,7 +37,7 @@ app.use('/api', (_req, res) => res.status(404).json({ error: 'Ruta no encontrada
 
 app.listen(PORT, () => {
   console.log(`Gateway listening on :${PORT}`);
-  console.log(`  /api/events      -> ${EVENT_SERVICE_URL}`);
+  console.log(`  /api/events|artists -> ${EVENT_SERVICE_URL}`);
   console.log(`  /api/auth|users  -> ${USER_SERVICE_URL}`);
   console.log(`  /api/assistant   -> ${ASSISTANT_SERVICE_URL}`);
 });

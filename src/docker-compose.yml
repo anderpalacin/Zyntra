@@ -41,6 +41,10 @@ services:
       DATABASE_URL: postgresql://zyntra:zyntra@events_db:5432/events
       TICKETMASTER_API_KEY: ${TICKETMASTER_API_KEY:-}
       TICKETMASTER_COUNTRY: ${TICKETMASTER_COUNTRY:-ES}
+      SETLISTFM_API_KEY: ${SETLISTFM_API_KEY:-}
+      MUSICBRAINZ_USER_AGENT: ${MUSICBRAINZ_USER_AGENT:-}
+      DEFAULT_CITY: ${DEFAULT_CITY:-Bilbao}
+      KULTURKLIK: ${KULTURKLIK:-on}
     depends_on:
       events_db:
         condition: service_healthy
@@ -65,8 +69,10 @@ services:
     container_name: zyntra_assistant_service
     environment:
       EVENT_SERVICE_URL: http://event_service:8000
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      ASSISTANT_MODEL: ${ASSISTANT_MODEL:-claude-opus-5-5}
+      ASSISTANT_MODEL: ${ASSISTANT_MODEL:-}
     depends_on:
       event_service:
         condition: service_healthy

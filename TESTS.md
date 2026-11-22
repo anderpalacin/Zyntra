@@ -32,7 +32,7 @@
 
 ### Asistente con IA (19 de noviembre de 2026)
 
-`POST /assistant` con `{message, previous?}`. Probado en modo básico (sin clave) y con Claude simulado.
+`POST /assistant` con `{message, previous?}`. Probado en modo básico (sin clave) y con Gemini y Claude simulados.
 
 | Mensaje | Esperado | Obtenido | ✔ |
 |---------|----------|----------|---|
@@ -44,6 +44,7 @@
 | «hola» | Mensaje de ayuda, sin conciertos | Ayuda con un ejemplo, `events: []` | ✅ |
 | `message` vacío | `422` | `422` | ✅ |
 | Claude con clave falsa / rechazo | Cae al intérprete básico | `engine: "basic"`, respuesta correcta | ✅ |
+| Gemini con clave falsa | Cae al intérprete básico | `400` de Google → `engine: "basic"`, respuesta correcta | ✅ |
 | 21 preguntas en un minuto | `429` a partir de la 21.ª | `429` | ✅ |
 
 ### Prueba visual

@@ -5,9 +5,18 @@ Modos:
 - Ticketmaster: consulta la Discovery API, guarda los resultados en la BD
   y, si la API falla (clave mala, caída, límite), responde con lo guardado
   marcando "source": "cache".
+
+Kulturklik: además, todos los conciertos de Euskadi (agenda abierta del Gobierno Vasco) se sincronizan en la BD
+cada pocas horas y se mezclan con los de Ticketmaster (sin duplicados). Ver kulturklik.py.
+
+Artistas (/artists): MusicBrainz identifica al artista sin confusiones (MBID), Ticketmaster da sus próximos
+conciertos y setlist.fm su historial en una ciudad (por defecto Bilbao). Ver artists.py.
 """
 import logging
 import os
+import re
+import threading
+import time as clock
 from contextlib import asynccontextmanager
 from zoneinfo import ZoneInfo
 from datetime import date, datetime, time, timedelta, timezone
@@ -19,6 +28,10 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import DateTime, Float, Integer, String, create_engine, func, or_, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
+
+import artists
+import kulturklik
+from artists import UpstreamError
 
 log = logging.getLogger("uvicorn.error")
 
@@ -32,6 +45,9 @@ TICKETMASTER_COUNTRY = os.getenv("TICKETMASTER_COUNTRY", "ES")
 TICKETMASTER_URL = "https://app.ticketmaster.com/discovery/v2/events.json"
 MODE = "Ticketmaster" if TICKETMASTER_API_KEY else "Demo"
 LOCAL_TZ = ZoneInfo(os.getenv("EVENTS_TZ", "Europe/Madrid"))
+KULTURKLIK_ENABLED = os.getenv("KULTURKLIK", "on").strip().lower() not in ("off", "0", "false", "no")
+KULTURKLIK_SYNC_HOURS = float(os.getenv("KULTURKLIK_SYNC_HOURS", "6"))
+sync_status: dict = {"last_sync": None, "events": 0, "error": None}
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
@@ -116,6 +132,7 @@ def init_db() -> None:
         db.execute(text("ALTER TABLE events ADD COLUMN IF NOT EXISTS url VARCHAR(500)"))
         db.execute(text("ALTER TABLE events ALTER COLUMN name TYPE VARCHAR(300)"))
         db.execute(text("ALTER TABLE events ADD COLUMN IF NOT EXISTS genre VARCHAR(100)"))
+        db.execute(text("CREATE EXTENSION IF NOT EXISTS unaccent"))  # 'San Sebastian' encuentra 'San Sebastián'
         for artist, genre in DEMO_GENRES.items():  # demos creados antes de existir la columna
             db.execute(
                 text("UPDATE events SET genre = :g WHERE source = 'demo' AND artist = :a AND genre IS NULL"),
@@ -147,12 +164,28 @@ def _like(value: str) -> str:
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+# Nombres en euskera u oficiales -> el nombre con el que guardamos la ciudad.
+CITY_ALIASES = {"bilbo": "Bilbao", "donostia": "San Sebastián", "donosti": "San Sebastián",
+                "gasteiz": "Vitoria-Gasteiz", "vitoria": "Vitoria-Gasteiz", "irunea": "Pamplona", "iruna": "Pamplona"}
+
+
+def canonical_city(city: str) -> str:
+    return CITY_ALIASES.get(artists.norm(city), city.strip())
+
+
+def _ilike(column, value: str, contains: bool = False):
+    pattern = f"%{_like(value)}%" if contains else _like(value)
+    return func.unaccent(column).ilike(func.unaccent(pattern), escape="\\")
+
+
 def _filtered(stmt, f: Filters):
     if f.city:
-        stmt = stmt.where(Event.city.ilike(_like(f.city), escape="\\"))
+        # Exacta ('Bilbao') o parte de un nombre compuesto ('Vitoria' -> 'Vitoria-Gasteiz',
+        # 'Pamplona' -> 'Pamplona/Iruña', 'San Sebastián' -> 'Donostia-San Sebastián'), sin tildes.
+        city = re.escape(artists.strip_accents(canonical_city(f.city)))
+        stmt = stmt.where(func.unaccent(Event.city).op("~*")(rf"(^|[-/ ]){city}($|[-/ ])"))
     if f.q:
-        pattern = f"%{_like(f.q)}%"
-        stmt = stmt.where(or_(Event.name.ilike(pattern, escape="\\"), Event.artist.ilike(pattern, escape="\\")))
+        stmt = stmt.where(or_(_ilike(Event.name, f.q, True), _ilike(Event.artist, f.q, True)))
     if f.genre:
         stmt = stmt.where(Event.genre.ilike(f"%{_like(f.genre)}%", escape="\\"))
     if f.start:
@@ -242,13 +275,57 @@ def fetch_ticketmaster(f: Filters, size: int) -> list[dict]:
     return list(unique.values())
 
 
-def save_events(db: Session, rows: list[dict]) -> None:
+def _name_tokens(text: str) -> set[str]:
+    stop = {"concierto", "kontzertua", "concert", "tour", "gira", "live", "directo", "zuzenean", "presenta", "world"}
+    return {w for w in artists.norm(text).split() if len(w) >= 4 and w not in stop}
+
+
+def merge_events(*groups) -> list:
+    """Une varias fuentes ordenadas por fecha, quitando el mismo concierto repetido (mismo día, ciudad y nombre
+    parecido). En caso de duplicado gana la primera fuente (Ticketmaster: trae imagen y género)."""
+    kept, seen = [], {}
+    for index, group in enumerate(groups):
+        for event in group:
+            when = event.date.astimezone(LOCAL_TZ).date() if event.date.tzinfo else event.date.date()
+            tokens = (_name_tokens(event.name) | _name_tokens(event.artist)) - _name_tokens(event.city)
+            # Solo se comparan fuentes distintas: dentro de una misma fuente, ids distintos son conciertos distintos.
+            if any(i != index and artists.same_city(c, event.city) and tokens & t
+                   for i, c, t in seen.get(when, [])):
+                continue
+            seen.setdefault(when, []).append((index, event.city, tokens))
+            kept.append(event)
+    return sorted(kept, key=lambda e: e.date)
+
+
+def sync_kulturklik() -> int:
+    rows = kulturklik.fetch_all()
+    with SessionLocal() as db:
+        for i in range(0, len(rows), 500):
+            save_events(db, rows[i:i + 500])
+    return len(rows)
+
+
+def _kulturklik_loop() -> None:
+    while True:
+        try:
+            count = sync_kulturklik()
+            sync_status.update(last_sync=datetime.now(timezone.utc).isoformat(), events=count, error=None)
+            log.info("Kulturklik: %d conciertos sincronizados", count)
+            clock.sleep(KULTURKLIK_SYNC_HOURS * 3600)
+        except Exception as exc:  # que un fallo puntual no mate el hilo
+            sync_status["error"] = type(exc).__name__
+            log.warning("Kulturklik no disponible (%s); reintento en 10 min", type(exc).__name__)
+            clock.sleep(600)
+
+
+def save_events(db: Session, rows: list[dict], keep_source: bool = False) -> None:
     if not rows:
         return
+    skip = {"external_id", "source"} if keep_source else {"external_id"}
     stmt = insert(Event).values(rows)
     stmt = stmt.on_conflict_do_update(
         index_elements=[Event.external_id],
-        set_={c: stmt.excluded[c] for c in rows[0] if c != "external_id"},
+        set_={c: stmt.excluded[c] for c in rows[0] if c not in skip},
     )
     db.execute(stmt)
     db.commit()
@@ -260,6 +337,8 @@ def save_events(db: Session, rows: list[dict]) -> None:
 async def lifespan(_: FastAPI):
     init_db()
     log.info("Mode: %s", MODE)
+    if KULTURKLIK_ENABLED:
+        threading.Thread(target=_kulturklik_loop, name="kulturklik-sync", daemon=True).start()
     yield
 
 
@@ -279,7 +358,7 @@ def get_db():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "mode": MODE}
+    return {"status": "ok", "mode": MODE, "kulturklik": sync_status if KULTURKLIK_ENABLED else "off"}
 
 
 @app.get("/events", response_model=list[EventOut])
@@ -296,26 +375,49 @@ def list_events(
     if date_from and date_to and date_from > date_to:
         raise HTTPException(400, "date_from no puede ser posterior a date_to")
     f = Filters(city=city, q=q, genre=genre, date_from=date_from, date_to=date_to)
+    wanted = offset + limit
+    now = datetime.now(timezone.utc)
+
+    # Kulturklik (y los demos) ya están en la BD.
+    local = db.scalars(
+        _filtered(select(Event).where(Event.source == "kulturklik", Event.date >= now), f).order_by(Event.date).limit(wanted)
+    ).all()
 
     if MODE == "Demo":
-        stmt = _filtered(select(Event).where(Event.source == "demo"), f).order_by(Event.date)
-        return db.scalars(stmt.offset(offset).limit(limit)).all()
+        demo = db.scalars(_filtered(select(Event).where(Event.source == "demo"), f).order_by(Event.date).limit(wanted)).all()
+        return merge_events(demo, local)[offset:wanted]
 
     try:
-        rows = fetch_ticketmaster(f, offset + limit)
+        rows = fetch_ticketmaster(f, wanted)
         save_events(db, rows)
-        ids = [r["external_id"] for r in rows][offset : offset + limit]
-        events = db.scalars(select(Event).where(Event.external_id.in_(ids)).order_by(Event.date)).all()
-        return events
+        ids = [r["external_id"] for r in rows]
+        tm = db.scalars(select(Event).where(Event.external_id.in_(ids)).order_by(Event.date)).all() if ids else []
     except (httpx.HTTPError, ValueError) as exc:
         # No logueamos str(exc): incluye la URL y con ella la apikey.
         reason = f"HTTP {exc.response.status_code}" if isinstance(exc, httpx.HTTPStatusError) else type(exc).__name__
         log.warning("Ticketmaster no disponible (%s); sirviendo desde caché", reason)
+        stmt = _filtered(select(Event).where(Event.source == "ticketmaster", Event.date >= now), f).order_by(Event.date)
+        tm = [EventOut.model_validate(e).model_copy(update={"source": "cache"}) for e in db.scalars(stmt.limit(wanted))]
+    return merge_events(tm, local)[offset:wanted]
 
-    now = datetime.now(timezone.utc)
-    stmt = _filtered(select(Event).where(Event.source == "ticketmaster", Event.date >= now), f).order_by(Event.date)
-    cached = db.scalars(stmt.offset(offset).limit(limit)).all()
-    return [EventOut.model_validate(e).model_copy(update={"source": "cache"}) for e in cached]
+
+@app.get("/events/cities")
+def list_cities(q: str | None = Query(None, max_length=100), limit: int = Query(50, ge=1, le=300),
+                db: Session = Depends(get_db)):
+    """Ciudades con conciertos próximos (para el buscador de ciudades), de más a menos conciertos."""
+    sources = ["ticketmaster", "kulturklik"] + (["demo"] if MODE == "Demo" else [])
+    count = func.count().label("count")
+    stmt = select(Event.city, count).where(Event.source.in_(sources))
+    if MODE != "Demo":
+        stmt = stmt.where(Event.date >= datetime.now(timezone.utc))
+    if q and q.strip():
+        stmt = stmt.where(or_(_ilike(Event.city, q.strip(), True), _ilike(Event.city, canonical_city(q), True)))
+    totals: dict[str, int] = {}
+    for c, n in db.execute(stmt.group_by(Event.city)).all():
+        name = kulturklik.city_name(c)  # 'Pamplona/Iruña' y 'Pamplona' cuentan juntas
+        totals[name] = totals.get(name, 0) + n
+    ranked = sorted(totals.items(), key=lambda kv: (-kv[1], kv[0]))[:limit]
+    return [{"city": c, "count": n} for c, n in ranked]
 
 
 @app.get("/events/{event_id}", response_model=EventOut)
@@ -324,3 +426,88 @@ def get_event(event_id: int = Path(ge=1, le=2_147_483_647), db: Session = Depend
     if not event:
         raise HTTPException(404, "Evento no encontrado")
     return event
+
+
+# ---------------------------------------------------------------- artistas
+
+MBID_PATTERN = r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+DEFAULT_CITY = os.getenv("DEFAULT_CITY", "Bilbao")
+
+
+@app.get("/artists/search")
+def search_artists(q: str = Query(min_length=2, max_length=100, description="Nombre del artista o grupo")):
+    """Candidatos de MusicBrainz con su desambiguación (país, tipo, años, etiquetas)."""
+    try:
+        return artists.search_artists(q.strip())
+    except UpstreamError as exc:
+        log.warning("%s", exc)
+        raise HTTPException(502, "MusicBrainz no está disponible ahora mismo; prueba en unos segundos") from exc
+
+
+def _upcoming(db: Session, artist: dict, city: str) -> dict:
+    out = {"available": MODE == "Ticketmaster", "ticketmaster_url": None, "matched_by": None,
+           "in_city": [], "elsewhere": []}
+    if MODE == "Demo":
+        events = db.scalars(select(Event).where(Event.source == "demo", Event.artist.ilike(_like(artist["name"]),
+                                                                                           escape="\\"))).all()
+    else:
+        raw = []
+        try:
+            attraction = artists.find_tm_attraction(artist["mbid"], artist["name"])
+            if attraction:
+                out["ticketmaster_url"], out["matched_by"] = attraction["url"], attraction["matched_by"]
+                raw = artists.tm_events_for_attraction(attraction["id"])
+        except UpstreamError as exc:
+            log.warning("%s", exc)
+            out["available"] = False
+        rows = list({m["external_id"]: m for m in map(_map_tm_event, raw) if m}.values())
+        # Gira mundial: se guardan como "tm_artist" para no mezclarlas con la caché de la portada (España).
+        save_events(db, [{**r, "source": "tm_artist"} for r in rows], keep_source=True)
+        ids = [r["external_id"] for r in rows]
+        events = db.scalars(select(Event).where(Event.external_id.in_(ids)).order_by(Event.date)).all() if ids else []
+    # Salas pequeñas de Euskadi: conciertos de Kulturklik cuyo título nombra al artista (palabra completa).
+    name = artists.norm(artist["name"])
+    if len(name) >= 3:
+        candidates = db.scalars(select(Event).where(Event.source == "kulturklik",
+                                                    Event.date >= datetime.now(timezone.utc),
+                                                    _ilike(Event.name, artist["name"], True))).all()
+        local = [e for e in candidates if re.search(rf"(^| ){re.escape(name)}( |$)", artists.norm(e.name))]
+        events = merge_events(events, local)
+        out["available"] = out["available"] or bool(local)
+    for e in events:
+        key = "in_city" if artists.same_city(e.city, canonical_city(city)) else "elsewhere"
+        out[key].append(EventOut.model_validate(e))
+    return out
+
+
+def _history(artist: dict, city: str) -> dict:
+    try:
+        return artists.setlist_history(artist["mbid"], city)
+    except UpstreamError as exc:
+        log.warning("%s", exc)
+        return {"available": False, "reason": "error"}
+
+
+@app.get("/artists/{mbid}")
+def artist_detail(
+    mbid: str = Path(pattern=MBID_PATTERN),
+    city: str = Query(DEFAULT_CITY, min_length=2, max_length=100),
+    db: Session = Depends(get_db),
+):
+    """Ficha del artista: datos de MusicBrainz, próximos conciertos e historial en la ciudad."""
+    city = canonical_city(city)  # "Donostia" -> "San Sebastián", para todas las fuentes
+    try:
+        artist = artists.get_artist(mbid)
+    except UpstreamError as exc:
+        log.warning("%s", exc)
+        raise HTTPException(502, "MusicBrainz no está disponible ahora mismo; prueba en unos segundos") from exc
+    if not artist:
+        raise HTTPException(404, "Artista no encontrado en MusicBrainz")
+    upcoming = _upcoming(db, artist, city)
+    return {
+        "artist": artist,
+        "city": city,
+        "upcoming": upcoming,
+        "cities": sorted({e.city for e in upcoming["in_city"] + upcoming["elsewhere"]}),
+        "history": _history(artist, city),
+    }
