@@ -74,7 +74,9 @@ export interface ArtistCandidate {
   score: number;
 }
 
-export interface Artist extends Omit<ArtistCandidate, 'tags' | 'score'> {
+export interface Artist extends Omit<ArtistCandidate, 'tags' | 'score' | 'mbid'> {
+  mbid: string | null; // null: artista que no está en MusicBrainz (página por nombre)
+  image?: { url: string; source: 'wikidata' | 'deezer' } | null;
   genres: string[];
   links: Partial<Record<'official' | 'wikipedia' | 'wikidata' | 'bandcamp' | 'youtube' | 'streaming', string>>;
 }
@@ -113,4 +115,5 @@ export interface ArtistDetail {
     elsewhere: ConcertEvent[];
   };
   history: ArtistHistory;
+  past: ConcertEvent[]; // conciertos pasados que tenemos guardados (respaldo si setlist.fm no responde)
 }

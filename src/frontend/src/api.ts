@@ -60,6 +60,13 @@ export const api = {
   searchArtists: (q: string) => request<ArtistCandidate[]>(`/artists/search?q=${encodeURIComponent(q)}`),
   artist: (mbid: string, city: string) =>
     request<ArtistDetail>(`/artists/${mbid}?city=${encodeURIComponent(city)}`),
+  artistImage: (name: string, mbid?: string) =>
+    request<{ url: string | null; source: string | null }>(
+      `/artists/image?name=${encodeURIComponent(name)}${mbid ? `&mbid=${mbid}` : ''}`,
+    ),
+  // Artista que no está en MusicBrainz: su página se arma con el nombre del cartel.
+  artistByName: (name: string, city: string) =>
+    request<ArtistDetail>(`/artists/by-name?name=${encodeURIComponent(name)}&city=${encodeURIComponent(city)}`),
 
   register: (name: string, email: string, password: string) =>
     request<AuthResponse>('/auth/register', { method: 'POST', body: { name, email, password } }),

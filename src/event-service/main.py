@@ -444,6 +444,27 @@ def search_artists(q: str = Query(min_length=2, max_length=100, description="Nom
         raise HTTPException(502, "MusicBrainz no está disponible ahora mismo; prueba en unos segundos") from exc
 
 
+def _local_events(db: Session, artist: dict, past: bool, limit: int = 60) -> list:
+    """Conciertos de nuestra base de datos que son de este artista: el título de Kulturklik lo nombra
+    (palabra completa) o, para cualquier fuente, el campo artista es ese nombre."""
+    name = artists.norm(artist["name"])
+    if len(name) < 3:
+        return []
+    now = datetime.now(timezone.utc)
+    when = Event.date < now if past else Event.date >= now
+    candidates = db.scalars(
+        select(Event)
+        .where(when, Event.source != "demo", or_(_ilike(Event.name, artist["name"], True),
+                                                 _ilike(Event.artist, artist["name"], True)))
+        .order_by(Event.date.desc() if past else Event.date)
+        .limit(400)
+    ).all()
+    word = re.compile(rf"(^| ){re.escape(name)}( |$)")
+    keep = [e for e in candidates
+            if artists.norm(e.artist) == name or (e.source == "kulturklik" and word.search(artists.norm(e.name)))]
+    return keep[:limit]
+
+
 def _upcoming(db: Session, artist: dict, city: str) -> dict:
     out = {"available": MODE == "Ticketmaster", "ticketmaster_url": None, "matched_by": None,
            "in_city": [], "elsewhere": []}
@@ -466,14 +487,11 @@ def _upcoming(db: Session, artist: dict, city: str) -> dict:
         ids = [r["external_id"] for r in rows]
         events = db.scalars(select(Event).where(Event.external_id.in_(ids)).order_by(Event.date)).all() if ids else []
     # Salas pequeñas de Euskadi: conciertos de Kulturklik cuyo título nombra al artista (palabra completa).
-    name = artists.norm(artist["name"])
-    if len(name) >= 3:
-        candidates = db.scalars(select(Event).where(Event.source == "kulturklik",
-                                                    Event.date >= datetime.now(timezone.utc),
-                                                    _ilike(Event.name, artist["name"], True))).all()
-        local = [e for e in candidates if re.search(rf"(^| ){re.escape(name)}( |$)", artists.norm(e.name))]
+    # Sin MBID (artista que no está en MusicBrainz), también lo que ya tenemos guardado con ese nombre de artista.
+    local = _local_events(db, artist, past=False)
+    if local:
         events = merge_events(events, local)
-        out["available"] = out["available"] or bool(local)
+        out["available"] = True
     for e in events:
         key = "in_city" if artists.same_city(e.city, canonical_city(city)) else "elsewhere"
         out[key].append(EventOut.model_validate(e))
@@ -482,10 +500,56 @@ def _upcoming(db: Session, artist: dict, city: str) -> dict:
 
 def _history(artist: dict, city: str) -> dict:
     try:
-        return artists.setlist_history(artist["mbid"], city)
+        return artists.setlist_history(artist["mbid"], city, artist["name"])
     except UpstreamError as exc:
         log.warning("%s", exc)
         return {"available": False, "reason": "error"}
+
+
+def _artist_page(db: Session, artist: dict, city: str) -> dict:
+    upcoming = _upcoming(db, artist, city)
+    return {
+        "artist": {**artist, "image": artists.artist_image(artist)},
+        "city": city,
+        "upcoming": upcoming,
+        "cities": sorted({e.city for e in upcoming["in_city"] + upcoming["elsewhere"]}),
+        "history": _history(artist, city),
+        # Conciertos pasados que tenemos guardados: historial de respaldo si setlist.fm no responde.
+        "past": [EventOut.model_validate(e) for e in _local_events(db, artist, past=True, limit=30)],
+    }
+
+
+@app.get("/artists/image")
+def artist_image(
+    name: str = Query(min_length=2, max_length=120, description="Nombre exacto del artista"),
+    mbid: str | None = Query(None, pattern=MBID_PATTERN,
+                             description="Solo homónimos: foto de Wikidata de ESTE artista, nunca por nombre"),
+):
+    """Foto del artista para las listas. La ficha trae la suya en artist.image."""
+    if mbid:
+        try:
+            artist = artists.get_artist(mbid)
+        except UpstreamError:
+            artist = None
+        wikidata = ((artist or {}).get("links") or {}).get("wikidata")
+        url = artists.wikidata_image(wikidata) if wikidata else None
+        return {"url": url, "source": "wikidata" if url else None}
+    url = artists.deezer_image(" ".join(name.split()))
+    return {"url": url, "source": "deezer" if url else None}
+
+
+@app.get("/artists/by-name")
+def artist_by_name(
+    name: str = Query(min_length=2, max_length=120, description="Nombre tal cual aparece en el cartel"),
+    city: str = Query(DEFAULT_CITY, min_length=2, max_length=100),
+    db: Session = Depends(get_db),
+):
+    """Ficha de un artista que no está en MusicBrainz: sus conciertos por nombre e historial de setlist.fm."""
+    city = canonical_city(city)
+    artist = {"mbid": None, "name": " ".join(name.split()), "disambiguation": None, "type": None,
+              "country": None, "area": None, "begin_area": None, "begin": None, "end": None, "ended": False,
+              "genres": [], "links": {}}
+    return _artist_page(db, artist, city)
 
 
 @app.get("/artists/{mbid}")
@@ -503,11 +567,4 @@ def artist_detail(
         raise HTTPException(502, "MusicBrainz no está disponible ahora mismo; prueba en unos segundos") from exc
     if not artist:
         raise HTTPException(404, "Artista no encontrado en MusicBrainz")
-    upcoming = _upcoming(db, artist, city)
-    return {
-        "artist": artist,
-        "city": city,
-        "upcoming": upcoming,
-        "cities": sorted({e.city for e in upcoming["in_city"] + upcoming["elsewhere"]}),
-        "history": _history(artist, city),
-    }
+    return _artist_page(db, artist, city)

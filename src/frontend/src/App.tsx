@@ -7,6 +7,7 @@ import { AuthPage } from './pages/AuthPage';
 import { MyConcerts } from './pages/MyConcerts';
 import { ArtistPage, ArtistSearch } from './pages/Artists';
 import { useAssistant } from './components/ChatWidget';
+import { useScrollMemory } from './navigation';
 
 // Enlaces antiguos a /assistant?q=...: abren el chat flotante con la pregunta.
 function AssistantLink() {
@@ -18,6 +19,7 @@ function AssistantLink() {
 
 export function App() {
   const { user, logout } = useAuth();
+  useScrollMemory();
 
   return (
     <>
@@ -51,6 +53,7 @@ export function App() {
           <Route path="/register" element={<AuthPage mode="register" />} />
           <Route path="/assistant" element={<AssistantLink />} />
           <Route path="/artists" element={<ArtistSearch />} />
+          <Route path="/artists/name/:name" element={<ArtistPage />} />
           <Route path="/artists/:mbid" element={<ArtistPage />} />
           <Route path="/me" element={<MyConcerts />} />
           <Route path="*" element={<p className="muted">Page not found.</p>} />

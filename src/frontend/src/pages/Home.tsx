@@ -11,6 +11,11 @@ const FALLBACK_CITIES = ['Bilbao', 'San Sebastián', 'Vitoria-Gasteiz', 'Pamplon
 const ARTIST_EXAMPLES = ['Berri Txarrak', 'Ginebras', 'Vetusta Morla'];
 const AI_EXAMPLE = 'Algo de rock en Bilbao este mes';
 const PAGE = 48;
+const CACHE_TTL = 5 * 60_000;
+
+// Lo que había cargado (con los "Load more") al salir de Home, para volver exactamente a donde estabas.
+let lastList: { city: string; events: ConcertEvent[]; hasMore: boolean; at: number } | null = null;
+const cachedList = (city: string) => (lastList && lastList.city === city && Date.now() - lastList.at < CACHE_TTL ? lastList : null);
 
 export function Home() {
   const { open: openAssistant } = useAssistant();
@@ -21,8 +26,12 @@ export function Home() {
   const [cityInput, setCityInput] = useState(city);
   const [artistInput, setArtistInput] = useState('');
   const [cities, setCities] = useState<CityCount[]>([]);
-  const [events, setEvents] = useState<ConcertEvent[] | null>(null);
-  const [hasMore, setHasMore] = useState(false);
+  const [events, setEvents] = useState<ConcertEvent[] | null>(() => cachedList(city)?.events ?? null);
+  const [hasMore, setHasMore] = useState(() => cachedList(city)?.hasMore ?? false);
+
+  useEffect(() => {
+    if (events) lastList = { city, events, hasMore, at: Date.now() };
+  }, [events, hasMore]); // eslint-disable-line react-hooks/exhaustive-deps
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,6 +45,12 @@ export function Home() {
   useEffect(() => {
     let cancelled = false;
     setCityInput(city);
+    const cached = cachedList(city);
+    if (cached) {
+      setEvents(cached.events);
+      setHasMore(cached.hasMore);
+      return;
+    }
     setEvents(null);
     setError(null);
     api
